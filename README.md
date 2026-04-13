@@ -158,8 +158,7 @@ Release 页面：
 - 优化 Hermes 集成与升级兼容性
 - 增加更完整的文档、示例与多设备测试结果
 
-## 贡献与变更记录
+## 许可证与变更记录
 
-- 贡献说明：见 `CONTRIBUTING.md`
 - 许可证：见 `LICENSE`
 - 版本变更：见 `CHANGELOG.md`
