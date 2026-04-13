@@ -1,5 +1,7 @@
 # Android Chroot 环境 Magisk 模块
 
+重要提示：本 Magisk 模块的主要代码、脚本与整体工程内容由 AI 辅助编程生成与整理，并在实际设备与使用场景中持续迭代。使用者在部署、修改或二次分发前，应自行审阅实现细节，并结合自身设备环境完成充分验证。
+
 `android_chroot_env` 是一个面向 Android 设备的 Magisk 模块，用于部署和管理一个基于 `chroot` 的 `arm64` Linux 用户空间环境，并提供对 Hermes 的可选集成支持。
 
 该项目的目标是为 Android 设备提供一个相对清晰、可维护、可扩展的 chroot 运行环境，使其既可以作为通用 Linux 用户空间使用，也可以在需要时接入 Hermes Agent 工作流。
