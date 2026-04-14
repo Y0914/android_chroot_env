@@ -4,7 +4,21 @@
 
 本项目参考 Keep a Changelog 的结构整理，并在合适场景下使用语义化风格的版本标签。
 
-## [v1.2.0] - 2026-04-13
+## [v1.2.1] - 2026-04-14
+
+### 调整
+- 适配 Hermes Agent v0.9.0 的官方 CLI / Gateway 变化
+- Hermes 相关命令现在会透传新的官方子命令，如 `config`、`gateway`、`skills`、`memory`、`mcp`、`profile`
+- 更新 Hermes Gateway 的 `ps` 兼容性补丁扫描路径，优先覆盖 `gateway/run.py`
+- 更新模块说明，明确 `hermes start` 为模块内后台启动封装
+
+### 说明
+- 该版本主要面向 Hermes v0.9.0 兼容性修复
+- 保持 chroot 主体能力与已有使用方式不变
+
+### 新增
+- 发布 `v1.2.1` GitHub Release
+- 上传 Release 安装包：`android_chroot_env-v1.2.1-release.zip`
 
 ### 新增
 - 初始化公开 GitHub 仓库

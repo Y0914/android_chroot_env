@@ -43,7 +43,7 @@ su -c chroot-env umount
 
 ### 2. Hermes 集成
 
-模块为 Hermes 提供了统一的命令映射，便于在 chroot 环境中完成安装、配置、诊断与启动：
+模块为 Hermes 提供了统一的命令映射，便于在 chroot 环境中完成安装、配置、诊断与启动；同时也会透传官方 Hermes 的新子命令：
 
 - `chroot-env hermes install`
 - `chroot-env hermes model`
@@ -53,9 +53,11 @@ su -c chroot-env umount
 - `chroot-env hermes doctor`
 - `chroot-env hermes start`
 - `chroot-env hermes status`
+- 其它官方子命令（如 `config` / `gateway` / `skills` / `memory` / `mcp` / `profile`）会原样透传
 
 说明：
 - Hermes 为可选组件，不影响 chroot 主体功能的独立使用。
+- `chroot-env hermes start` 走的是模块内的后台启动封装；如需使用官方网关子命令，可直接使用 `chroot-env hermes gateway ...`。
 - 模块对 Hermes 相关流程进行了适配封装，便于在 Android chroot 场景中调用。
 
 ## 安装方式
