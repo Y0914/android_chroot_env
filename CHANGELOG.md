@@ -4,6 +4,17 @@
 
 本项目参考 Keep a Changelog 的结构整理，并在合适场景下使用语义化风格的版本标签。
 
+## [v1.3.0] - 2026-04-18
+
+### 调整
+- 仓库开始直接跟踪 `module/` 下的 Magisk 模块源码，而不是只上传二进制安装包
+- 导入 `META-INF`、`system`、`lib`、`module.prop`、启动脚本与卸载脚本等完整模块文件
+- 移除 `lib/bootstrap.sh` 中工具链安装后的 `toolchain_installed` 二次校验
+
+### 新增
+- 发布 `android_chroot_env-v1.3.0-magisk.zip`
+- 在仓库内保留可直接审阅与二次修改的模块源文件布局
+
 ## [v1.2.1] - 2026-04-14
 
 ### 调整

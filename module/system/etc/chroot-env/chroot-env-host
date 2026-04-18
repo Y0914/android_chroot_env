@@ -1,0 +1,698 @@
+#!/system/bin/sh
+HOST_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$HOST_SCRIPT_DIR/lib/common.sh"
+
+needs_preflight() {
+  case "$1" in
+    init|rootfs|packages|hermes|update)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+run_bootstrap() {
+  ACTION="$1"
+  if needs_preflight "$ACTION"; then
+    run_preflight
+  fi
+  "$HOST_SCRIPT_DIR/lib/bootstrap.sh" "$ACTION"
+}
+
+ensure_chroot_ready() {
+  ensure_root
+  ensure_config
+  load_config
+  [ -f "$ROOTFS_MARKER" ] || run_bootstrap rootfs || exit 1
+}
+
+api_server_env_file() {
+  echo "$PERSIST_DIR/hermes-home/.env"
+}
+
+api_server_key_configured() {
+  ENV_FILE="$(api_server_env_file)"
+  [ -f "$ENV_FILE" ] || return 1
+  grep -Eq '^[[:space:]]*API_SERVER_KEY=.+$' "$ENV_FILE"
+}
+
+print_api_server_key_guidance() {
+  ENV_FILE="$(api_server_env_file)"
+  err "官方 API Server 文档要求先配置 API_SERVER_KEY。"
+  err "请在 chroot 持久化目录写入：$ENV_FILE"
+  err "至少包含以下内容："
+  err "  API_SERVER_ENABLED=true"
+  err "  API_SERVER_KEY=change-me-local-dev"
+  err "也可以直接执行：chroot-env hermes gen-key"
+}
+
+generate_api_server_key() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32 2>/dev/null && return 0
+  fi
+
+  if [ -r /dev/urandom ] && command -v od >/dev/null 2>&1; then
+    head -c 32 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n'
+    return 0
+  fi
+
+  printf "%s%s" "$$" "$(date +%s 2>/dev/null)$(date +%N 2>/dev/null)"
+}
+
+run_hermes_gen_key() {
+  ensure_root
+  ensure_config
+  load_config
+
+  ENV_FILE="$(api_server_env_file)"
+  ENV_DIR="$(dirname "$ENV_FILE")"
+  TMP_FILE="$ENV_FILE.tmp.$$"
+  KEY="$(generate_api_server_key)"
+
+  [ -n "$KEY" ] || die "生成 API_SERVER_KEY 失败"
+
+  mkdir -p "$ENV_DIR" || die "无法创建目录：$ENV_DIR"
+
+  if [ -f "$ENV_FILE" ]; then
+    awk -v api_key="$KEY" '
+      BEGIN {
+        seen_enabled = 0
+        seen_key = 0
+      }
+      /^[[:space:]]*API_SERVER_ENABLED=/ {
+        print "API_SERVER_ENABLED=true"
+        seen_enabled = 1
+        next
+      }
+      /^[[:space:]]*API_SERVER_KEY=/ {
+        print "API_SERVER_KEY=" api_key
+        seen_key = 1
+        next
+      }
+      { print }
+      END {
+        if (!seen_enabled) print "API_SERVER_ENABLED=true"
+        if (!seen_key) print "API_SERVER_KEY=" api_key
+      }
+    ' "$ENV_FILE" >"$TMP_FILE" || die "写入 API_SERVER_KEY 失败"
+    mv "$TMP_FILE" "$ENV_FILE" || die "更新 API_SERVER_KEY 失败"
+  else
+    cat >"$ENV_FILE" <<EOF
+API_SERVER_ENABLED=true
+API_SERVER_KEY=$KEY
+EOF
+  fi
+
+  msg "已生成并写入 API_SERVER_KEY"
+  msg "配置文件：$ENV_FILE"
+  msg "当前键值：$KEY"
+}
+
+wait_for_gateway_start() {
+  START_TIMEOUT="${1:-20}"
+  ELAPSED=0
+  while [ "$ELAPSED" -lt "$START_TIMEOUT" ]; do
+    if gateway_running && gateway_port_listening; then
+      return 0
+    fi
+    sleep 1
+    ELAPSED=$((ELAPSED + 1))
+  done
+  return 1
+}
+
+wait_for_pid_exit() {
+  PID="$1"
+  STOP_TIMEOUT="${2:-10}"
+  ELAPSED=0
+  while [ "$ELAPSED" -lt "$STOP_TIMEOUT" ]; do
+    kill -0 "$PID" 2>/dev/null || return 0
+    sleep 1
+    ELAPSED=$((ELAPSED + 1))
+  done
+  kill -0 "$PID" 2>/dev/null && return 1
+  return 0
+}
+
+start_gateway() {
+  ensure_root
+  ensure_config
+  load_config
+  cleanup_stale_gateway_pid
+  [ -f "$HERMES_MARKER" ] || run_bootstrap hermes || exit 1
+
+  if ! api_server_key_configured; then
+    print_api_server_key_guidance
+    die "未检测到 API_SERVER_KEY，已取消启动 Hermes Gateway"
+  fi
+
+  if gateway_running; then
+    if gateway_port_listening; then
+      msg "Hermes Gateway 已在 loopback:$GATEWAY_PORT 运行"
+      return 0
+    fi
+    die "检测到旧的 Gateway PID，但端口 $GATEWAY_PORT 未就绪；请执行 chroot-env hermes restart 修复"
+  fi
+
+  if gateway_port_listening; then
+    die "端口 $GATEWAY_PORT 已被占用，但当前未识别为 Hermes Gateway；请先执行 chroot-env hermes stop 或手动清理"
+  fi
+
+  msg "正在启动 Hermes Gateway，监听 loopback:$GATEWAY_PORT"
+  chroot_run 'mkdir -p /run/hermes /var/log/hermes
+export API_SERVER_ENABLED=true
+export API_SERVER_HOST=127.0.0.1
+export API_SERVER_PORT='"$GATEWAY_PORT"'
+nohup hermes gateway >/var/log/hermes/gateway.log 2>&1 &
+echo $! >/run/hermes/gateway.pid' || die "启动 Hermes Gateway 失败"
+
+  if wait_for_gateway_start 20; then
+    msg "Hermes Gateway 启动完成"
+  elif gateway_running; then
+    die "Hermes Gateway 进程已启动，但端口 $GATEWAY_PORT 未就绪；请执行 chroot-env hermes logs 查看日志"
+  elif gateway_port_listening; then
+    die "端口 $GATEWAY_PORT 已开始监听，但 PID 未成功识别；请执行 chroot-env hermes status 或 chroot-env hermes logs 检查"
+  else
+    die "Hermes Gateway 未能成功启动；请执行 chroot-env hermes logs 查看日志"
+  fi
+}
+
+stop_gateway() {
+  ensure_root
+  ensure_config
+  load_config
+  cleanup_stale_gateway_pid
+  if ! gateway_running; then
+    if gateway_port_listening; then
+      die "未找到有效网关 PID，但端口 $GATEWAY_PORT 仍在监听；请先检查或清理现有进程"
+    fi
+    msg "Hermes Gateway 当前未运行"
+    return 0
+  fi
+
+  PID="$(gateway_pid)"
+  if ! gateway_pid_matches "$PID"; then
+    rm -f "$RUN_DIR/gateway.pid"
+    die "拒绝终止 PID $PID，因为它不是 Hermes Gateway 进程"
+  fi
+
+  kill "$PID" 2>/dev/null || true
+  if ! wait_for_pid_exit "$PID" 10; then
+    kill -9 "$PID" 2>/dev/null || true
+    wait_for_pid_exit "$PID" 5 || die "Hermes Gateway 停止失败，PID $PID 仍然存活"
+  fi
+
+  rm -f "$RUN_DIR/gateway.pid"
+
+  if gateway_port_listening; then
+    die "Hermes Gateway 进程已退出，但端口 $GATEWAY_PORT 仍在监听，请检查是否存在残留进程"
+  fi
+
+  msg "Hermes Gateway 已停止"
+}
+
+restart_gateway() {
+  ensure_root
+  ensure_config
+  load_config
+  PREV_RUNNING=0
+  if gateway_running; then
+    PREV_RUNNING=1
+  elif gateway_port_listening; then
+    die "端口 $GATEWAY_PORT 仍在监听，但未找到有效网关 PID；请先检查现有进程"
+  fi
+
+  if [ "$PREV_RUNNING" = "1" ]; then
+    msg "正在重启 Hermes Gateway"
+    stop_gateway || die "Hermes Gateway 重启失败：停止阶段失败"
+  else
+    msg "Hermes Gateway 当前未运行，将直接启动"
+  fi
+
+  start_gateway || die "Hermes Gateway 重启失败：启动阶段失败"
+  msg "Hermes Gateway 重启完成"
+}
+
+run_chroot_cmd() {
+  ensure_chroot_ready
+  chroot_run "$1"
+}
+
+run_hermes_cmd() {
+  ensure_chroot_ready
+  [ -f "$HERMES_MARKER" ] || run_bootstrap hermes || exit 1
+  CMD=""
+  for ARG in "$@"; do
+    ARG_ESCAPED="$(printf "%s" "$ARG" | sed "s/'/'\\\\''/g")"
+    if [ -z "$CMD" ]; then
+      CMD="'$ARG_ESCAPED'"
+    else
+      CMD="$CMD '$ARG_ESCAPED'"
+    fi
+  done
+  [ -n "$CMD" ] || die "Hermes 命令不能为空"
+  chroot_run "$CMD"
+}
+
+run_hermes_model() {
+  ensure_chroot_ready
+  [ -f "$HERMES_MARKER" ] || run_bootstrap hermes || exit 1
+
+  chroot_run 'hermes model'
+  RC=$?
+  [ "$RC" = "0" ] || return "$RC"
+
+  touch "$PROVIDER_SETUP_MARKER"
+  msg "Hermes 模型与 Provider 配置已完成"
+}
+
+run_hermes_tools() {
+  ensure_chroot_ready
+  [ -f "$HERMES_MARKER" ] || run_bootstrap hermes || exit 1
+  chroot_run 'hermes tools'
+}
+
+run_hermes_setup() {
+  ensure_chroot_ready
+  [ -f "$HERMES_MARKER" ] || run_bootstrap hermes || exit 1
+
+  chroot_run 'hermes setup'
+  RC=$?
+  [ "$RC" = "0" ] || return "$RC"
+
+  touch "$PROVIDER_SETUP_MARKER"
+  msg "Hermes 官方完整 setup 已完成"
+}
+
+show_logs() {
+  [ -f "$LOG_DIR/gateway.log" ] || die "目前还没有 Gateway 日志"
+  tail -n 120 "$LOG_DIR/gateway.log"
+}
+
+run_hermes_status() {
+  print_hermes_status
+}
+
+enable_service() {
+  ensure_root
+  ensure_config
+  sed -i 's/^AUTO_START=.*/AUTO_START="1"/' "$CONFIG_FILE"
+  msg "已开启 Gateway 开机自启"
+}
+
+disable_service() {
+  ensure_root
+  ensure_config
+  sed -i 's/^AUTO_START=.*/AUTO_START="0"/' "$CONFIG_FILE"
+  msg "已关闭 Gateway 开机自启"
+}
+
+set_config_value() {
+  KEY="$1"
+  VALUE="$2"
+  ensure_config
+  TMP_FILE="$CONFIG_FILE.tmp.$$"
+  awk -v key="$KEY" -v value="$VALUE" '
+    BEGIN { found = 0 }
+    $0 ~ "^" key "=" {
+      print key "=\"" value "\""
+      found = 1
+      next
+    }
+    { print }
+    END {
+      if (!found) print key "=\"" value "\""
+    }
+  ' "$CONFIG_FILE" >"$TMP_FILE" || die "写入配置失败：$KEY"
+  mv "$TMP_FILE" "$CONFIG_FILE" || die "更新配置失败：$KEY"
+}
+
+validate_runit_service_name() {
+  NAME="$1"
+  case "$NAME" in
+    ''|*[!A-Za-z0-9._-]*)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+validate_runit_services() {
+  SERVICES="$1"
+  [ -n "$SERVICES" ] || return 0
+  for SVC in $SERVICES; do
+    validate_runit_service_name "$SVC" || return 1
+  done
+  return 0
+}
+
+runit_installed() {
+  [ -f "$ROOTFS_MARKER" ] || return 1
+  chroot_run 'command -v runsvdir >/dev/null 2>&1' >/dev/null 2>&1
+}
+
+runit_running() {
+  [ -f "$ROOTFS_MARKER" ] || return 1
+  chroot_run 'if command -v pgrep >/dev/null 2>&1; then pgrep -x runsvdir >/dev/null 2>&1; else ps -ef 2>/dev/null | grep -q "[r]unsvdir"; fi' >/dev/null 2>&1
+}
+
+runit_pid_list() {
+  [ -f "$ROOTFS_MARKER" ] || return 1
+  chroot_run 'if command -v pgrep >/dev/null 2>&1; then pgrep -x runsvdir 2>/dev/null | tr "\n" " "; fi' 2>/dev/null | tr -d '\r'
+}
+
+run_runit_start_inner() {
+  validate_runit_services "$RUNIT_SERVICES" || die "runit 服务列表包含非法名称（仅允许字母、数字、点、下划线、短横线）"
+  runit_installed || die "chroot 内未安装 runit，请先执行：chroot-env packages 或 chroot-env exec \"apt-get update && apt-get install -y runit\""
+
+  CMD='mkdir -p /etc/service /run /var/log'
+  for SVC in $RUNIT_SERVICES; do
+    CMD="$CMD
+[ -d '/etc/sv/$SVC' ] || { echo \"missing service: $SVC\" >&2; exit 31; }
+ln -sfn '/etc/sv/$SVC' '/etc/service/$SVC'"
+  done
+  CMD="$CMD
+if command -v pgrep >/dev/null 2>&1; then
+  pgrep -x runsvdir >/dev/null 2>&1 && exit 0
+else
+  ps -ef 2>/dev/null | grep -q '[r]unsvdir' && exit 0
+fi
+nohup runsvdir -P /etc/service >/var/log/runsvdir.log 2>&1 &
+echo \$! >/run/runsvdir.pid"
+
+  chroot_run "$CMD" || die "启动 runit 失败（请确认 /etc/sv 下的服务目录存在）"
+}
+
+run_runit_stop_inner() {
+  runit_installed || return 0
+  chroot_run 'pkill -x runsvdir >/dev/null 2>&1 || true; pkill -x runsv >/dev/null 2>&1 || true' >/dev/null 2>&1 || true
+}
+
+print_runit_status() {
+  ensure_config
+  load_config
+  echo "runit 开机自启: $( [ "$RUNIT_AUTO_START" = "1" ] && echo 已开启 || echo 已关闭 )"
+  echo "runit 附加服务: $( [ -n "$RUNIT_SERVICES" ] && echo "$RUNIT_SERVICES" || echo 无 )"
+  if [ ! -f "$ROOTFS_MARKER" ]; then
+    echo "runit 安装状态: RootFS 未就绪"
+    echo "runsvdir 运行状态: 未运行"
+    return 0
+  fi
+  if runit_installed; then
+    echo "runit 安装状态: 已安装"
+  else
+    echo "runit 安装状态: 未安装"
+  fi
+  if runit_running; then
+    echo "runsvdir 运行状态: 运行中"
+    PIDS="$(runit_pid_list)"
+    [ -n "$PIDS" ] && echo "runsvdir PID: $PIDS"
+  else
+    echo "runsvdir 运行状态: 未运行"
+  fi
+}
+
+enable_runit_autostart() {
+  ensure_root
+  ensure_config
+  load_config
+  set_config_value "RUNIT_AUTO_START" "1"
+  msg "已开启 runit 开机自启"
+}
+
+disable_runit_autostart() {
+  ensure_root
+  ensure_config
+  load_config
+  set_config_value "RUNIT_AUTO_START" "0"
+  msg "已关闭 runit 开机自启"
+}
+
+set_runit_services() {
+  ensure_root
+  ensure_config
+  load_config
+  SERVICES="$*"
+  validate_runit_services "$SERVICES" || die "runit 服务列表包含非法名称（仅允许字母、数字、点、下划线、短横线）"
+  set_config_value "RUNIT_SERVICES" "$SERVICES"
+  if [ -n "$SERVICES" ]; then
+    msg "已设置 runit 附加服务：$SERVICES"
+  else
+    msg "已清空 runit 附加服务"
+  fi
+}
+
+run_runit_start() {
+  ensure_chroot_ready
+  ensure_config
+  load_config
+  run_runit_start_inner
+  msg "runit 已启动"
+  [ -n "$RUNIT_SERVICES" ] && msg "runit 附加服务已链接到 /etc/service：$RUNIT_SERVICES"
+}
+
+run_runit_stop() {
+  ensure_root
+  ensure_config
+  load_config
+  [ -f "$ROOTFS_MARKER" ] || {
+    msg "RootFS 未就绪，runit 当前未运行"
+    return 0
+  }
+  run_runit_stop_inner
+  if runit_running; then
+    die "停止 runit 失败，runsvdir 仍在运行"
+  fi
+  msg "runit 已停止"
+}
+
+run_runit_restart() {
+  ensure_root
+  run_runit_stop
+  run_runit_start
+}
+
+run_runit_autostart() {
+  ensure_root
+  ensure_config
+  load_config
+  [ "$RUNIT_AUTO_START" = "1" ] || return 0
+  if [ ! -f "$ROOTFS_MARKER" ]; then
+    msg "runit 开机自启已开启，但 RootFS 未就绪，已跳过"
+    return 0
+  fi
+  run_runit_start_inner
+  msg "runit 开机自启动执行完成"
+}
+
+help_text() {
+  cat <<'EOF'
+chroot-env 命令：
+  preflight             执行宿主环境预检
+  rootfs                在线下载并解压 Linux rootfs
+  packages              安装基础工具链（含 runit）、Python、nvm、Node.js 运行环境
+  init                  执行 rootfs + packages 初始化
+  shell                 进入 chroot shell；如无 rootfs 会先准备 rootfs
+  exec "<cmd>"          在 chroot 中执行单条命令；如无 rootfs 会先准备 rootfs
+  runit status          查看 runit 状态
+  runit start           启动 runit（runsvdir /etc/service）
+  runit stop            停止 runit（runsvdir/runsv）
+  runit restart         重启 runit
+  runit enable          开启 runit 开机自启
+  runit disable         关闭 runit 开机自启
+  runit services "<s>"  设置附加服务列表（空格分隔，留空清空）
+  status                查看 chroot 主环境状态
+  refresh-ui            刷新 Magisk 模块摘要显示
+  umount                卸载 chroot 挂载点
+  help                  查看帮助
+
+Hermes 相关命令：
+  hermes status         查看 Hermes 状态
+  hermes install        安装 Hermes Agent
+  hermes update         更新 Hermes Agent（按 HERMES_VERSION，默认 latest）
+  hermes model          运行官方 hermes model
+  hermes tools          运行官方 hermes tools
+  hermes setup          运行官方完整 hermes setup
+  hermes doctor         运行 hermes doctor
+  hermes gen-key        自动生成并写入 API_SERVER_KEY
+  hermes start          启动官方 hermes gateway（启动前检查 API_SERVER_KEY）
+  hermes stop           停止 Hermes Gateway
+  hermes restart        重启 Hermes Gateway
+  hermes logs           查看 Hermes Gateway 日志
+  hermes enable         开启 Gateway 开机自启
+  hermes disable        关闭 Gateway 开机自启
+  其它官方 hermes 子命令（如 config / gateway / skills / memory / mcp / profile）会自动透传
+EOF
+}
+
+CMD="$1"
+REFRESH_UI=1
+[ -n "$CMD" ] || CMD="help"
+[ $# -gt 0 ] && shift
+
+case "$CMD" in
+  preflight)
+    run_preflight
+    ;;
+  init)
+    run_bootstrap init
+    ;;
+  rootfs)
+    run_bootstrap rootfs
+    ;;
+  packages)
+    run_bootstrap packages
+    ;;
+  hermes)
+    SUBCMD="$1"
+    [ $# -gt 0 ] && shift
+    case "$SUBCMD" in
+      status)
+        run_hermes_status
+        ;;
+      install)
+        run_bootstrap hermes
+        ;;
+      update)
+        run_bootstrap update
+        ;;
+      model)
+        run_hermes_model
+        ;;
+      tools)
+        run_hermes_tools
+        ;;
+      setup)
+        run_hermes_setup
+        ;;
+      doctor)
+        run_hermes_cmd hermes doctor
+        ;;
+      gen-key)
+        run_hermes_gen_key
+        ;;
+      start)
+        start_gateway
+        ;;
+      stop)
+        stop_gateway
+        ;;
+      restart)
+        restart_gateway
+        ;;
+      logs)
+        show_logs
+        ;;
+      enable)
+        enable_service
+        ;;
+      disable)
+        disable_service
+        ;;
+      ''|help|-h|--help)
+        cat <<'EOF'
+chroot-env hermes 子命令：
+  status         查看 Hermes 状态
+  install        安装 Hermes
+  update         更新 Hermes（按 HERMES_VERSION，默认 latest）
+  model          运行官方 hermes model
+  tools          运行官方 hermes tools
+  setup          运行官方完整 hermes setup
+  doctor         运行 hermes doctor
+  gen-key        自动生成并写入 API_SERVER_KEY
+  start          启动官方 hermes gateway（启动前检查 API_SERVER_KEY）
+  stop           停止 Hermes Gateway
+  restart        重启 Hermes Gateway
+  logs           查看 Hermes Gateway 日志
+  enable         开启 Gateway 开机自启
+  disable        关闭 Gateway 开机自启
+  其它官方 hermes 子命令（如 config / gateway / skills / memory / mcp / profile）会自动透传
+EOF
+        ;;
+      *)
+        run_hermes_cmd hermes "$SUBCMD" "$@"
+        ;;
+    esac
+    ;;
+  runit)
+    SUBCMD="$1"
+    [ $# -gt 0 ] && shift
+    case "$SUBCMD" in
+      status)
+        print_runit_status
+        ;;
+      start)
+        run_runit_start
+        ;;
+      stop)
+        run_runit_stop
+        ;;
+      restart)
+        run_runit_restart
+        ;;
+      autostart)
+        run_runit_autostart
+        ;;
+      enable)
+        enable_runit_autostart
+        ;;
+      disable)
+        disable_runit_autostart
+        ;;
+      services)
+        set_runit_services "$*"
+        ;;
+      ''|help|-h|--help)
+        cat <<'EOF'
+chroot-env runit 子命令：
+  status         查看 runit 状态
+  start          启动 runit（runsvdir /etc/service）
+  stop           停止 runit（runsvdir/runsv）
+  restart        重启 runit
+  enable         开启 runit 开机自启
+  disable        关闭 runit 开机自启
+  services "<s>" 设置附加服务列表（空格分隔，留空清空）
+EOF
+        ;;
+      *)
+        die "未知 runit 子命令：$SUBCMD"
+        ;;
+    esac
+    ;;
+  shell)
+    ensure_chroot_ready
+    chroot_interactive_shell
+    ;;
+  exec)
+    [ -n "$1" ] || die '用法：chroot-env exec "<cmd>"'
+    run_chroot_cmd "$*"
+    ;;
+  status)
+    print_status
+    ;;
+  refresh-ui)
+    refresh_module_status
+    echo "Magisk 模块描述已刷新。"
+    ;;
+  umount)
+    ensure_root
+    umount_chroot
+    ;;
+  help|-h|--help)
+    REFRESH_UI=0
+    help_text
+    ;;
+  *)
+    die "未知命令：$CMD"
+    ;;
+esac
+
+RC=$?
+if [ "$REFRESH_UI" = "1" ]; then
+  refresh_module_status >/dev/null 2>&1
+fi
+exit $RC

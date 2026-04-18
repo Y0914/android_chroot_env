@@ -1,0 +1,7 @@
+#!/system/bin/sh
+MODDIR="/data/adb/modules/chroot_env"
+. "$MODDIR/lib/common.sh"
+
+ensure_root
+prepare_host_runtime || exit 1
+exec "$(host_runtime_entrypoint)" "$@"

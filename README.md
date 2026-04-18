@@ -123,14 +123,28 @@ chroot-env hermes status
 
 当前发布包请见 GitHub Releases：
 
-- `android_chroot_env-v1.2.0-release.zip`
+- `android_chroot_env-v1.3.0-magisk.zip`
 
 Release 页面：
 - https://github.com/Y0914/android_chroot_env/releases
 
+## 仓库源码结构
+
+仓库现在直接跟踪 Magisk 模块源码，位于：
+
+- `module/`
+
+其中包含：
+- `module/lib/`：核心宿主脚本
+- `module/system/`：模块安装后的系统路径内容
+- `module/META-INF/`：Magisk/Recovery 安装入口文件
+- `module/module.prop`：模块元数据
+
+如需重新打包发布 zip，可在仓库中基于 `module/` 目录构建。
+
 ## 版本信息
 
-- 当前版本：`v1.2.0`
+- 当前版本：`v1.3.0`
 - 目标架构：`arm64`
 - 默认 RootFS 来源：Ubuntu Base 26.04 beta arm64
 - 发布形式：Magisk 模块安装包
