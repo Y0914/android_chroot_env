@@ -107,9 +107,21 @@ su -c chroot-env umount
 - `chroot-env hermes status`
 - 其它官方子命令（如 `config` / `gateway` / `skills` / `memory` / `mcp` / `profile`）会原样透传
 
+推荐安装与启动流程：
+
+```sh
+su
+chroot-env hermes install
+chroot-env hermes setup
+chroot-env hermes gen-key
+chroot-env hermes start
+chroot-env hermes status
+chroot-env hermes enable
+```
+
 说明：
 - Hermes 为可选组件，不影响 chroot 主体功能的独立使用。
-- `chroot-env hermes start` 走的是模块内的后台启动封装；如需使用官方网关子命令，可直接使用 `chroot-env hermes gateway ...`。
+- `chroot-env hermes start` 走的是模块内后台启动封装；如需使用官方网关子命令，可直接使用 `chroot-env hermes gateway ...`。
 - 模块对 Hermes 相关流程进行了适配封装，便于在 Android chroot 场景中调用。
 - `hermes install`：安装 Hermes Agent
 - `hermes update`：更新 Hermes Agent（按 `HERMES_VERSION`，默认 `latest`）
