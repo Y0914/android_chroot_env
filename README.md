@@ -98,6 +98,24 @@ su -c chroot-env umount
 - `chroot-env runit enable` / `disable`：开启/关闭开机自启
 - `chroot-env runit services "<svc1 svc2>"`：设置需要自动链接到 `/etc/service` 的服务列表
 
+#### 2.1 runit 是干什么的
+
+`runit` 是一个轻量级的服务管理器，用来在 chroot 里持续托管长期运行的后台服务。
+
+在这个模块里，`runit` 主要负责：
+
+- 启动并维持 `sshd`、Hermes 相关服务或其它自定义后台进程
+- 在服务异常退出后自动重新拉起
+- 统一管理 `/etc/service` 下启用的服务
+- 配合模块的开机逻辑实现 chroot 内服务自启动
+
+简单理解：
+
+- `chroot` 提供 Linux 用户空间环境
+- `runit` 负责这个环境里的“后台服务持续运行”
+
+如果没有 `runit`，很多需要常驻的服务只能手动启动，设备重启或进程退出后也不会自动恢复。
+
 ### 3. Hermes 集成
 
 模块为 Hermes 提供统一命令映射，便于在 chroot 环境中完成安装、配置、诊断与启动；同时也会透传官方 Hermes 的新子命令：
