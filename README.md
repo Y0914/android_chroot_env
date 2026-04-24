@@ -10,10 +10,10 @@
 
 - 模块名称：`Android Chroot 环境（实验性）`
 - 模块 ID：`chroot_env`
-- 当前版本：`v1.3.0`
-- `versionCode`：`4`
+- 当前版本：`v1.3.1`
+- `versionCode`：`5`
 - 目标架构：`arm64`
-- 默认 RootFS 来源：Ubuntu Base 26.04 beta arm64
+- 默认 RootFS 来源：Ubuntu Base 26.04 release arm64
 
 当前 Magisk 模块描述字段会动态刷新，初始值类似：
 
@@ -191,7 +191,7 @@ GATEWAY_PORT="8642"
 当前默认值：
 
 ```sh
-ROOTFS_URL="https://cdimage.ubuntu.com/ubuntu-base/releases/26.04/beta/ubuntu-base-26.04-beta-base-arm64.tar.gz"
+ROOTFS_URL="https://cdimage.ubuntu.com/ubuntu-base/releases/26.04/release/ubuntu-base-26.04-base-arm64.tar.gz"
 HERMES_PREFIX="/root/.local"
 HERMES_VERSION="latest"
 HERMES_NODE_VERSION="25"
@@ -236,7 +236,7 @@ RUNIT_SERVICES=""
 
 当前发布包请见 GitHub Releases：
 
-- `android_chroot_env-v1.3.0-magisk.zip`
+- `android_chroot_env-v1.3.1-magisk.zip`
 
 Release 页面：
 

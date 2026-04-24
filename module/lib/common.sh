@@ -22,7 +22,7 @@ HOST_RUNTIME_VERSION_FILE="$HOST_RUNTIME_DIR/current.version"
 HOST_RUNTIME_SOURCE_DIR="$MODDIR/system/etc/chroot-env"
 HOST_RUNTIME_SOURCE_ENTRY="$HOST_RUNTIME_SOURCE_DIR/chroot-env-host"
 
-DEFAULT_ROOTFS_URL="https://cdimage.ubuntu.com/ubuntu-base/releases/26.04/beta/ubuntu-base-26.04-beta-base-arm64.tar.gz"
+DEFAULT_ROOTFS_URL="https://cdimage.ubuntu.com/ubuntu-base/releases/26.04/release/ubuntu-base-26.04-base-arm64.tar.gz"
 
 DEFAULT_HERMES_PREFIX="/root/.local"
 DEFAULT_HERMES_VERSION="latest"

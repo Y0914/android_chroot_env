@@ -4,6 +4,14 @@
 
 本项目参考 Keep a Changelog 的结构整理，并在合适场景下使用语义化风格的版本标签。
 
+## [v1.3.1] - 2026-04-24
+
+### 修复
+- 修复默认 RootFS 下载地址，从已失效的 Ubuntu Base 26.04 beta 路径切换到 26.04 release arm64 路径
+
+### 新增
+- 发布 `android_chroot_env-v1.3.1-magisk.zip`
+
 ## [v1.3.0] - 2026-04-18
 
 ### 调整
@@ -45,5 +53,5 @@
 
 ### 说明
 - 当前目标架构为 `arm64`
-- 默认 RootFS 来源为 Ubuntu Base 26.04 beta arm64
+- 默认 RootFS 来源为 Ubuntu Base 26.04 release arm64
 - 当前版本仍属于实验性发布，更适合熟悉 Magisk、Root 与 chroot 工作流的用户使用

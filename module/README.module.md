@@ -172,7 +172,7 @@ GATEWAY_PORT="8642"
 当前默认值：
 
 ```sh
-ROOTFS_URL="https://cdimage.ubuntu.com/ubuntu-base/releases/26.04/beta/ubuntu-base-26.04-beta-base-arm64.tar.gz"
+ROOTFS_URL="https://cdimage.ubuntu.com/ubuntu-base/releases/26.04/release/ubuntu-base-26.04-base-arm64.tar.gz"
 HERMES_PREFIX="/root/.local"
 HERMES_VERSION="latest"
 HERMES_NODE_VERSION="25"
